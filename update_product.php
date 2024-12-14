@@ -1,95 +1,100 @@
 <?php
-header("Content-Type: application/json");
+// Handle the OPTIONS preflight request
+if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, Authorization');
+    exit();
+}
 
-// Allow cross-origin requests from your frontend
-header("Access-Control-Allow-Origin: http://localhost:3000");
-header("Access-Control-Allow-Methods: POST, GET, OPTIONS, PUT, DELETE");
+// Allow CORS for all requests
+header("Access-Control-Allow-Origin: *");
+header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization");
 
-// Database credentials
-$host = 'localhost';
-$dbname = 'invsys';
-$username = 'root';
-$password = '';
+// Set the content type to JSON
+header('Content-Type: application/json');
 
-// Establish database connection
-try {
-    $pdo = new PDO("mysql:host=$host;dbname=$dbname", $username, $password);
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-} catch (PDOException $e) {
-    echo json_encode(['success' => false, 'message' => 'Database connection failed: ' . $e->getMessage()]);
-    exit;
+// Database connection settings
+$servername = "localhost"; // Update with your database server name
+$username = "root";        // Update with your database username
+$password = "";            // Update with your database password
+$dbname = "invsys";        // Update with your database name
+
+// Establishing the database connection
+$conn = new mysqli($servername, $username, $password, $dbname);
+
+// Check for connection errors
+if ($conn->connect_error) {
+    echo json_encode(["success" => false, "message" => "Database connection failed: " . $conn->connect_error]);
+    exit();
 }
 
-// Handle preflight OPTIONS request
-if ($_SERVER['REQUEST_METHOD'] == 'OPTIONS') {
-    exit(0);
+// Get data from the request
+$data = json_decode(file_get_contents("php://input"), true);
+
+// Validate the input
+if (empty($data['id']) || empty($data['product']) || empty($data['category_id']) || empty($data['product_stock']) || empty($data['buying_price']) || empty($data['selling_price'])) {
+    echo json_encode(["success" => false, "message" => "Invalid input data. Please provide all required fields."]);
+    exit();
 }
 
-// Get input data from the request
-$data = json_decode(file_get_contents("php://input"));
+$id = $data['id'];
+$product = $data['product'];
+$category_id = $data['category_id'];
+$product_stock = $data['product_stock'];
+$buying_price = $data['buying_price'];
+$selling_price = $data['selling_price'];
 
-// Debugging: Log received data
-error_log("Received data: " . print_r($data, true));
+// Validate that the category_id exists
+$category_check_sql = "SELECT 1 FROM categories WHERE category_id = ?";
+$category_stmt = $conn->prepare($category_check_sql);
+$category_stmt->bind_param("i", $category_id);
+$category_stmt->execute();
+$category_stmt->store_result();
 
-// Validate input fields
-if (
-    isset($data->product_id) && !empty($data->product_id) &&
-    isset($data->product_name) && !empty($data->product_name) &&
-    isset($data->category_id) && !empty($data->category_id) &&
-    isset($data->product_stock) &&
-    isset($data->buying_price) &&
-    isset($data->selling_price)
-) {
-    $product_id = $data->product_id;
-    $product_name = $data->product_name;
-    $category_id = $data->category_id;
-    $product_stock = $data->product_stock;
-    $buying_price = $data->buying_price;
-    $selling_price = $data->selling_price;
+if ($category_stmt->num_rows == 0) {
+    echo json_encode(["success" => false, "message" => "Invalid category ID."]);
+    exit();
+}
 
-    // Debug: Parameters
-    error_log("Parameters: product_id = $product_id, product_name = $product_name, category_id = $category_id, product_stock = $product_stock, buying_price = $buying_price, selling_price = $selling_price");
+$category_stmt->close();
 
-    // Check if the product exists
-    $checkSql = "SELECT COUNT(*) FROM products WHERE product_id = :product_id";
-    $checkStmt = $pdo->prepare($checkSql);
-    $checkStmt->bindParam(':product_id', $product_id, PDO::PARAM_INT);
-    $checkStmt->execute();
-    $productExists = $checkStmt->fetchColumn();
+// Check if the product exists
+$product_check_sql = "SELECT 1 FROM products WHERE product_id = ?";
+$product_stmt = $conn->prepare($product_check_sql);
+$product_stmt->bind_param("i", $id);
+$product_stmt->execute();
+$product_stmt->store_result();
 
-    if ($productExists == 0) {
-        echo json_encode(['success' => false, 'message' => 'Product not found']);
-        exit;
-    }
+if ($product_stmt->num_rows == 0) {
+    echo json_encode(["success" => false, "message" => "Product not found."]);
+    exit();
+}
 
-    // Update product details
-    $sql = "UPDATE products SET 
-                product_name = :product_name, 
-                category_id = :category_id, 
-                product_stock = :product_stock, 
-                buying_price = :buying_price, 
-                selling_price = :selling_price 
-            WHERE product_id = :product_id";
+$product_stmt->close();
 
-    try {
-        $stmt = $pdo->prepare($sql);
-        $stmt->bindParam(':product_name', $product_name);
-        $stmt->bindParam(':category_id', $category_id);
-        $stmt->bindParam(':product_stock', $product_stock, PDO::PARAM_INT);
-        $stmt->bindParam(':buying_price', $buying_price);
-        $stmt->bindParam(':selling_price', $selling_price);
-        $stmt->bindParam(':product_id', $product_id, PDO::PARAM_INT);
+// Query to update product
+$sql = "UPDATE products SET 
+        product = ?, 
+        category_id = ?, 
+        product_stock = ?, 
+        buying_price = ?, 
+        selling_price = ? 
+        WHERE product_id = ?";
 
-        if ($stmt->execute()) {
-            echo json_encode(['success' => true, 'message' => 'Product updated successfully']);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Failed to update product', 'error' => $stmt->errorInfo()]);
-        }
-    } catch (PDOException $e) {
-        echo json_encode(['success' => false, 'message' => 'Error updating product: ' . $e->getMessage()]);
-    }
+$stmt = $conn->prepare($sql);
+
+// Bind parameters
+$stmt->bind_param("siddii", $product, $category_id, $product_stock, $buying_price, $selling_price, $id);
+
+// Execute the query
+if ($stmt->execute()) {
+    echo json_encode(["success" => true, "message" => "Product updated successfully."]);
 } else {
-    echo json_encode(['success' => false, 'message' => 'Missing required fields']);
+    echo json_encode(["success" => false, "message" => "Failed to update product."]);
 }
+
+$stmt->close();
+$conn->close();
 ?>
